@@ -1,0 +1,51 @@
+#!/bin/sh
+#
+# Author					Synchrotech
+# Creation Date				2020-08-06
+# Description
+# 	This hook extracts the contents of the commited pbit files
+# 	to flat files and flags them to be amended to the commit 
+# 	by the post-commit hook.
+#
+# Modification History
+# 2020-08-06	Creation
+
+# Work out what to diff against, really HEAD will work for any established repository.
+if git rev-parse --verify HEAD > /dev/null 2>&1
+then
+	against=HEAD
+else
+	# Initial commit: diff against an empty tree object
+	against=$(git hash-object -t tree /dev/null)
+fi
+
+# Retrieve the list of commited PBIT files, exclude those flagged for deletion.
+pbitfiles=$(git diff --cached --diff-filter=d --name-only HEAD | grep -e '^.*\.pbit$')
+
+# Exit the hook if no PBIT files are about to be comitted.
+if [ -z "$pbitfiles" ]
+then
+	exit 0
+fi
+
+# Redirect output to stderr.
+exec 1>&2
+
+# For each file, extract its contents to flat files using pbitutility.
+echo "$pbitfiles" | while IFS= read -r line
+do 
+	"./$(git config core.hooksPath)/pbitutility" -e "$line" > /dev/null 2>&1
+	if [ $? -ne 0 ]
+	then
+		cat <<\EOF 
+Error: Failed to extract the contents of one of the commited PBIT files.
+Make sure all the PBIT files are closed.
+EOF
+		exit 1
+	fi
+done
+# Since the error is raised from a sub-process, catch it and raise it in the main process as well.
+[ $? -eq 0 ] || exit 1
+
+# Flags to files to amend to the commit by the post-commit hook.
+echo "$pbitfiles" | sed -e "s/$/.contents\/*/" > .commit

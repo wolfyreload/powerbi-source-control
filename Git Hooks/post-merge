@@ -1,0 +1,29 @@
+#!/bin/sh
+#
+# Author					Synchrotech
+# Creation Date				2020-08-06
+# Description
+# 	This hook deletes outdated pbix files.
+# 	If a new pbit file is retrieved from the branch, 
+# 	delete the eventual pbix located in the same folder and having the same name.
+#
+# Modification History
+# 2020-08-06	Creation
+
+# Retrieve the list of merged PBIT files, exclude those flagged for deletion.
+pbitfiles=$(git diff --diff-filter=d --name-only HEAD@{1} HEAD | grep -e '^.*\.pbit$')
+
+# Exit the hook if no PBIT files were merged.
+if [ -z "$pbitfiles" ]
+then
+	exit 0
+fi
+
+# For each file, delete the eventual corresponding PBIX.
+echo "$pbitfiles" | sed -e "s/.pbit$/.pbix/" | while IFS= read -r line
+do 
+	if [ -e "$line" ]
+	then
+		rm "$line"
+	fi
+done

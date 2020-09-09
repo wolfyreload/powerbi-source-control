@@ -1,0 +1,20 @@
+#!/bin/sh
+#
+# Author					Synchrotech
+# Creation Date				2020-08-06
+# Description
+# 	This hook amends files flagged by the pre-commit to the last commit.
+#
+# Modification History
+# 2020-08-06	Creation
+
+if [ -e .commit ]
+then
+	while IFS= read -r line
+	do 
+		git add "$line"
+	done < .commit
+    rm .commit
+	
+	git commit --amend -C HEAD --no-verify
+fi
