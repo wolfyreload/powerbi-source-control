@@ -5,6 +5,7 @@ using System.IO.Packaging;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace PBITUtility
@@ -30,7 +31,7 @@ namespace PBITUtility
             }
             else if (args.Length == 2)
             {
-                switch(args[0])
+                switch (args[0])
                 {
                     case "-e":
                         Export(Path.GetFullPath(args[1]));
@@ -43,7 +44,7 @@ namespace PBITUtility
 
             Console.WriteLine("Usage:");
             Console.WriteLine("\t\"pbitutility -e <file.pbit>\" exports the contents of the PBIT file to flat files.");
-            Console.WriteLine("\t\"pbitutility -g <folder.pbit.contents>\" re-generates a PBIT file from the flat files.");           
+            Console.WriteLine("\t\"pbitutility -g <folder.pbit.contents>\" re-generates a PBIT file from the flat files.");
         }
 
         private static void Export(string pbitFilePath)
@@ -111,10 +112,19 @@ namespace PBITUtility
                         }
 
                         // Write the data from the part to a file (eventually add an extension).
-                        using (var fileStream = File.Open($"{folderPath}{uri}{GetExtensionForUri(part.Uri.ToString())}", FileMode.Create))
+                        var extension = GetExtensionForUri(part.Uri.ToString());
+                        var filePath = $"{folderPath}{uri}{extension}";
+                        using (var fileStream = File.Open(filePath, FileMode.Create))
                         {
                             // If the part is encoded in UTF-16 in the PBIT package, convert it to UTF-8 (encoding better handled by file comparison tools).
                             CopyStream(part.GetStream(), fileStream, IsUTF16(part.Uri.ToString()) ? EncodingConversion.UTF16ToUTF8 : EncodingConversion.None);
+                        }
+
+                        // If the exported file is a JSON, beautify it.
+                        if (extension == ".json")
+                        {
+                            var beautifiedJSON = BeautifyJSON(File.ReadAllText(filePath));
+                            File.WriteAllText(filePath, beautifiedJSON);
                         }
                     }
                 }
@@ -167,20 +177,32 @@ namespace PBITUtility
             }
 
             // Browse the files in the specified folder to re-generate the PBIT package.
-            var files = Directory.GetFiles(folderPath, "*", SearchOption.AllDirectories).ToList();
+            var filePaths = Directory.GetFiles(folderPath, "*", SearchOption.AllDirectories).ToList();
             using (var package = Package.Open(pbitFilePath, FileMode.Create))
             {
-                foreach (var file in files)
+                foreach (var filePath in filePaths)
                 {
-                    // Skip the ReadMe file and TableOfContents.json.
-                    if (file.EndsWith(@"\ReadMe.txt") || file.EndsWith(@"\Report\CustomVisuals\TableOfContents.json"))
+                    // Skip the ReadMe file, TableOfContents.json and SecurityBindings.
+                    // IMPORTANT: We noticed that ignoring the SecurityBindings file prevents corruption of the regenerated PBIT file with altered JSON files.
+                    //            Power BI seems to re-create this file properly on the next save, but since this is not documented, there may be some unexpected side effects.
+                    if (filePath.EndsWith(@"\ReadMe.txt") || filePath.EndsWith(@"\Report\CustomVisuals\TableOfContents.json") || filePath.EndsWith(@"\SecurityBindings"))
                     {
                         continue;
                     }
 
                     // Remove the eventual file extension added during export.
-                    var fileName = file.Replace(folderPath, "");
-                    var fileNameWithoutExtension = fileName.Substring(0, fileName.Length - GetExtensionForUri(fileName).Length);
+                    var fileName = filePath.Replace(folderPath, "");
+                    var extension = GetExtensionForUri(fileName);
+                    var fileNameWithoutExtension = fileName.Substring(0, fileName.Length - extension.Length);
+
+                    // If the current file is a JSON, create and import a minified version instead.
+                    var filePathToImport = filePath;
+                    if (extension == ".json")
+                    {
+                        filePathToImport = $"{filePath}_minified";
+                        var minifiedJSON = MinifyJSON(File.ReadAllText(filePath));
+                        File.WriteAllText(filePathToImport, minifiedJSON);
+                    }
 
                     // Restore the custom visual name replaced by an incremental index.
                     var uriName = fileNameWithoutExtension;
@@ -197,10 +219,16 @@ namespace PBITUtility
                     PackagePart part = package.CreatePart(uri, GetContentTypeForUri(uri), CompressionOption.Normal);
 
                     // Write the data from the file to the part.
-                    using (var fileStream = File.Open(file, FileMode.Open, FileAccess.Read))
+                    using (var fileStream = File.Open(filePathToImport, FileMode.Open, FileAccess.Read))
                     {
                         // If the part must be encoded in UTF-16 in the PBIT package, convert it back to UTF-16.
                         CopyStream(fileStream, part.GetStream(), IsUTF16(fileName) ? EncodingConversion.UTF8ToUTF16 : EncodingConversion.None);
+                    }
+
+                    // If created, delete the temporary minified JSON file.
+                    if (filePathToImport != filePath)
+                    {
+                        File.Delete(filePathToImport);
                     }
                 }
             }
@@ -295,6 +323,40 @@ namespace PBITUtility
                 default:
                     return false;
             }
+        }
+
+        /// <summary>
+        /// Returns a beautified JSON string.
+        /// </summary>
+        /// <param name="minifiedJSON">The minified JSON</param>
+        private static string BeautifyJSON(string minifiedJSON)
+        {
+            var options = new JsonSerializerOptions()
+            {
+                WriteIndented = true,
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            };
+
+            var jsonElement = JsonSerializer.Deserialize<JsonElement>(minifiedJSON);
+
+            return JsonSerializer.Serialize(jsonElement, options);
+        }
+
+        /// <summary>
+        /// Returns a minified JSON string.
+        /// </summary>
+        /// <param name="beautifiedJSON">The beautified JSON</param>
+        private static string MinifyJSON(string beautifiedJSON)
+        {
+            var options = new JsonSerializerOptions()
+            {
+                WriteIndented = false,
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            };
+
+            var jsonElement = JsonSerializer.Deserialize<JsonElement>(beautifiedJSON);
+
+            return JsonSerializer.Serialize(jsonElement, options);
         }
 
         /// <summary>
