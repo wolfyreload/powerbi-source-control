@@ -44,8 +44,6 @@ This activates the hooks present in the **Git Hooks** folder.
 
 ## Usage
 
-**Important!** This solution works with datasets saved using the enhanced metadata format. Please activate this preview feature in the Power BI Desktop options.
-
 ### Way of working
 The developer works with a PBIX file. When his changes are completed, he saves them in a PBIT template in the same folder and under the same file name as the report.
 
