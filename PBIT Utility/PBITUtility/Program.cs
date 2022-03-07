@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.IO.Packaging;
 using System.Linq;
 using System.Reflection;
@@ -55,9 +56,9 @@ namespace PBITUtility
                 Console.WriteLine($"The file {pbitFilePath} does not exist.");
                 return;
             }
-            else if(!pbitFilePath.EndsWith(".pbit"))
+            else if (!pbitFilePath.EndsWith(".pbit") && !pbitFilePath.EndsWith(".msapp"))
             {
-                Console.WriteLine($"{pbitFilePath} must be a .pbit file.");
+                Console.WriteLine($"{pbitFilePath} must be a .pbit or .msapp file.");
                 return;
             }
 
@@ -71,6 +72,52 @@ namespace PBITUtility
 
             // Open the PBIT package and browse its parts.
             var customVisuals = new List<string>();
+            if (pbitFilePath.EndsWith(".pbit"))
+            {
+                extractPBI(pbitFilePath, folderPath, customVisuals);
+            }
+            else 
+            {
+                extractPowerApp(pbitFilePath, folderPath);
+            }
+
+            // Add the ReadMe file.
+            var assembly = Assembly.GetExecutingAssembly();
+            var resourceName = assembly.GetManifestResourceNames().Single(x => x.EndsWith("ReadMe.txt"));
+            using (var stream = assembly.GetManifestResourceStream(resourceName))
+            {
+                using (var fileStream = File.Create($@"{folderPath}\ReadMe.txt"))
+                {
+                    CopyStream(stream, fileStream);
+                }
+            }
+
+            // Add the TableOfContents.json file for renamed custom visual folders.
+            if (customVisuals.Any())
+            {
+                File.WriteAllText($@"{folderPath}\Report\CustomVisuals\TableOfContents.json", JsonSerializer.Serialize(customVisuals));
+            }
+        }
+
+        private static void extractPowerApp(string pbitFilePath, string folderPath)
+        {
+            ZipFile.ExtractToDirectory(pbitFilePath, folderPath);
+
+            var filesList = Directory.GetFiles(folderPath, "*", SearchOption.AllDirectories);
+
+            foreach (var fileName in filesList)
+            {
+                // If the exported file is a JSON, beautify it.
+                if (fileName.EndsWith(".json"))
+                {
+                    var beautifiedJSON = BeautifyJSON(File.ReadAllText(fileName));
+                    File.WriteAllText(fileName, beautifiedJSON);
+                }
+            }
+        }
+
+        private static void extractPBI(string pbitFilePath, string folderPath, List<string> customVisuals)
+        {
             using (var package = Package.Open(pbitFilePath, FileMode.Open))
             {
                 foreach (var part in package.GetParts())
@@ -104,7 +151,7 @@ namespace PBITUtility
                                 subFolderToCreate = subFolderPath.Replace(customVisualName, customVisuals.IndexOf(customVisualName).ToString());
                                 uri = uri.Replace(customVisualName, customVisuals.IndexOf(customVisualName).ToString());
                             }
-                            
+
                             if (!Directory.Exists(subFolderToCreate))
                                 Directory.CreateDirectory(subFolderToCreate);
 
@@ -129,23 +176,6 @@ namespace PBITUtility
                     }
                 }
             }
-
-            // Add the ReadMe file.
-            var assembly = Assembly.GetExecutingAssembly();
-            var resourceName = assembly.GetManifestResourceNames().Single(x => x.EndsWith("ReadMe.txt"));
-            using (var stream = assembly.GetManifestResourceStream(resourceName))
-            {
-                using (var fileStream = File.Create($@"{folderPath}\ReadMe.txt"))
-                {
-                    CopyStream(stream, fileStream);
-                }
-            }
-
-            // Add the TableOfContents.json file for renamed custom visual folders.
-            if (customVisuals.Any())
-            {
-                File.WriteAllText($@"{folderPath}\Report\CustomVisuals\TableOfContents.json", JsonSerializer.Serialize(customVisuals));
-            }
         }
 
         private static void Generate(string folderPath)
@@ -156,9 +186,9 @@ namespace PBITUtility
                 Console.WriteLine($"The folder {folderPath} does not exist.");
                 return;
             }
-            else if (!folderPath.EndsWith(".pbit.contents"))
+            else if (!folderPath.EndsWith(".pbit.contents") && !folderPath.EndsWith(".msapp.contents"))
             {
-                Console.WriteLine($"{folderPath} must end with \".pbit.contents\".");
+                Console.WriteLine($"{folderPath} must end with \".pbit.contents\" or \".msapp.contents\".");
                 return;
             }
 
@@ -259,6 +289,11 @@ namespace PBITUtility
         /// <returns></returns>
         private static string GetExtensionForUri(string uri)
         {
+            if (uri.EndsWith(".json"))
+            {
+                return ".json";
+            }
+
             switch (uri)
             {
                 case "/Connections":
